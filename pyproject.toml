@@ -12,7 +12,7 @@ dependencies = [
 ]
 
 [project.scripts]
-app = "src.app:main"
+agent = "src.agent:main"
 
 [build-system]
 requires = ["hatchling"]
