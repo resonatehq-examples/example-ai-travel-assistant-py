@@ -1,6 +1,8 @@
-from unstructured.partition.html import partition_html
-import requests
 import json
+import os
+
+import requests
+from unstructured.partition.html import partition_html
 
 
 tools_config = [
@@ -23,7 +25,7 @@ tools_config = [
                 },
                 "required": ["search_query"],
             },
-        }
+        },
     },
     {
         "type": "function",
@@ -40,13 +42,13 @@ tools_config = [
                 },
                 "required": ["url"],
             },
-        }
-    }
+        },
+    },
 ]
 
 
-def search_internet(ctx, query, num_results=5):
-    serper_api_key = ctx.get_dependency("serper_api_key")
+def search_internet(ctx, query: str, num_results: int = 5) -> str:
+    serper_api_key = os.environ.get("SERPER_API_KEY", "")
     url = "https://google.serper.dev/search"
     payload = json.dumps({"q": query})
     headers = {
@@ -62,24 +64,26 @@ def search_internet(ctx, query, num_results=5):
     results = data["organic"]
     string_results = []
     for result in results[:num_results]:
-        string_results.append(f"""Title: {result['title']}
+        string_results.append(
+            f"""Title: {result['title']}
         Link: {result['link']}
         Snippet: {result['snippet']}
-        -----------------""")
+        -----------------"""
+        )
     r = "\n".join(string_results)
     return r
 
 
-def scrape_website(ctx, url):
+def scrape_website(ctx, url: str) -> str:
     print("LOG: scraping website content")
-    browserless_api_key = ctx.get_dependency("browserless_api_key")
+    browserless_api_key = os.environ.get("BROWSERLESS_API_KEY", "")
     site_url = url
     api_url = f"https://chrome.browserless.io/content?token={browserless_api_key}"
 
     payload = json.dumps({"url": site_url})
     headers = {
-        "cache-control": "no-cache", 
-        "content-type": "application/json"
+        "cache-control": "no-cache",
+        "content-type": "application/json",
     }
 
     response = requests.post(api_url, headers=headers, data=payload)
