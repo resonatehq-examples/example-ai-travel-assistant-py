@@ -1,33 +1,30 @@
-from .llm import interact_with_llm
-from dotenv import load_dotenv
-from resonate import Resonate
-from textwrap import dedent
-from openai import OpenAI
-from .tools import (
-    search_internet,
-    scrape_website,
-)
+import asyncio
 import json
 import os
+import sys
+from textwrap import dedent
+from typing import TYPE_CHECKING
+
+from dotenv import load_dotenv
+from openai import OpenAI
+from resonate.resonate import Resonate
+
+from .llm import interact_with_llm
+from .tools import (
+    scrape_website,
+    search_internet,
+)
+
+if TYPE_CHECKING:
+    from resonate.context import Context
 
 load_dotenv()
 
-openai_client = OpenAI(
-  api_key=os.getenv("OPENAI_API_KEY"),
-)
 
-
-resonate = Resonate.remote()
-resonate.set_dependency("openai_client", openai_client)
-resonate.set_dependency("serper_api_key", os.environ["SERPER_API_KEY"])
-resonate.set_dependency("browserless_api_key", os.environ["BROWSERLESS_API_KEY"])
-
-
-@resonate.register
-def travel_assistent(ctx):
+async def travel_assistent(ctx: "Context"):
     messages = [
         {
-            "role": "system", 
+            "role": "system",
             "content": """
                 You are a travel assistant.
                 You are capable of the full end-to-end travel planning process.
@@ -39,21 +36,21 @@ def travel_assistent(ctx):
                 If you are not sure about something, ask the user for more information.
                 If you need to search the internet for information, do so.
                 If you need to scrape a website for information, do so.
-                
+
                 When you have a complete trip plan, submit say "TRIP PLANNING COMPLETE" and then say the full plan.
                 Only say "TRIP PLANNING COMPLETE" when you are sure that the trip is complete, and have no more questions for the user.
-            """
+            """,
         },
         {
             "role": "user",
             "content": """
                  Plan a trip for me.
-            """
-        }
+            """,
+        },
     ]
 
     while True:
-        message = yield ctx.lfc(interact_with_llm, messages)
+        message = await ctx.run(interact_with_llm, messages)
         # Always add the assistant response
         assistant_message = {"role": "assistant", "content": message["content"]}
         if message.get("tool_calls"):
@@ -63,42 +60,80 @@ def travel_assistent(ctx):
                     "type": call["type"],
                     "function": {
                         "name": call["name"],
-                        "arguments": json.dumps(call["args"])
-                    }
+                        "arguments": json.dumps(call["args"]),
+                    },
                 }
                 for call in message["tool_calls"]
             ]
         messages.append(assistant_message)
         content = message.get("content")
         if content and "TRIP PLANNING COMPLETE" in content:
-            break            
+            break
         elif message["tool_calls"]:
             for tool_call in message["tool_calls"]:
                 tool_name = tool_call["name"]
                 args = tool_call["args"]
                 if tool_name == "internet_search":
-                    result = yield ctx.lfc(search_internet, args["search_query"], args.get("num_results", 5))
+                    result = await ctx.run(
+                        search_internet,
+                        args["search_query"],
+                        args.get("num_results", 5),
+                    )
                 elif tool_name == "scrape_website":
-                    result = yield ctx.lfc(scrape_website, args["url"])
+                    result = await ctx.run(scrape_website, args["url"])
                 else:
                     result = "Unknown tool call"
-                messages.append({"role": "tool", "tool_call_id": tool_call["id"], "content": result})
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call["id"],
+                        "content": result,
+                    }
+                )
         elif content:
-            input_message = yield ctx.lfc(chat_with_user, content)
+            input_message = await ctx.run(chat_with_user, content)
             messages.append({"role": "user", "content": input_message})
-            
+
     return message["content"]
 
 
-def chat_with_user(_, text_from_llm):
+def chat_with_user(_, text_from_llm: str) -> str:
     return input(dedent(text_from_llm))
 
-def main():
+
+async def _main() -> None:
+    openai_api_key = os.environ.get("OPENAI_API_KEY")
+    serper_api_key = os.environ.get("SERPER_API_KEY")
+    browserless_api_key = os.environ.get("BROWSERLESS_API_KEY")
+
+    if not serper_api_key:
+        sys.exit("SERPER_API_KEY environment variable is required")
+    if not browserless_api_key:
+        sys.exit("BROWSERLESS_API_KEY environment variable is required")
+
+    openai_client = OpenAI(api_key=openai_api_key)
+
+    resonate = Resonate(
+        url=os.environ.get("RESONATE_URL", "http://localhost:8001"),
+        group="worker",
+    )
+    resonate.with_dependency(openai_client)
+    resonate.register(travel_assistent)
+    resonate.register(interact_with_llm)
+    resonate.register(search_internet)
+    resonate.register(scrape_website)
+    resonate.register(chat_with_user)
+
     trip_id = input(dedent("Enter a trip Name/ID: "))
-    handle = travel_assistent.run(trip_id)
-    result = handle.result()
+    handle = resonate.run(trip_id, travel_assistent)
+    result = await handle.result()
     print("Here is a plan for your trip:")
     print(result)
+    await resonate.stop()
+
+
+def main() -> None:
+    asyncio.run(_main())
 
 
 if __name__ == "__main__":

@@ -1,9 +1,13 @@
-from .tools import tools_config
 import json
 
-def interact_with_llm(ctx, messages):
+from openai import OpenAI
+
+from .tools import tools_config
+
+
+def interact_with_llm(ctx, messages: list) -> dict:
     try:
-        openai_client = ctx.get_dependency("openai_client")
+        openai_client = ctx.get_dependency(OpenAI)
         completion = openai_client.chat.completions.create(
             model="gpt-4o-mini",
             store=False,
@@ -17,12 +21,14 @@ def interact_with_llm(ctx, messages):
         tool_calls = []
         if msg.tool_calls:
             for call in msg.tool_calls:
-                tool_calls.append({
-                    "id": call.id,
-                    "type": call.type,
-                    "name": call.function.name,
-                    "args": json.loads(call.function.arguments)
-                })
+                tool_calls.append(
+                    {
+                        "id": call.id,
+                        "type": call.type,
+                        "name": call.function.name,
+                        "args": json.loads(call.function.arguments),
+                    }
+                )
 
         return {
             "content": msg.content,
